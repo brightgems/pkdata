@@ -1,0 +1,9 @@
+{
+    "path" : "D:/git/hr_resign_predict/data",
+    "sortOrder" : [
+        {
+            "ascending" : true,
+            "columnIndex" : 2
+        }
+    ]
+}
