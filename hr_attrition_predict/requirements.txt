@@ -1,0 +1,8 @@
+apyori
+numpy
+pandas
+scikit-learn
+scikit-imbalance
+xgboost
+auto_ml
+scipy
