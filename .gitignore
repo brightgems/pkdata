@@ -3,3 +3,12 @@
 *.pyc
 *.csv
 
+tap4fun游戏玩家付费金额预测大赛.rar
+offline_job.log
+tap4fun/.env
+workdir/
+tap4fun/data/
+tap4fun/data/
+data/
+output/
+*.log
