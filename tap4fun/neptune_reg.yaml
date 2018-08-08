@@ -32,8 +32,8 @@ exclude:
 parameters:
   is_regression_problem: 1
 # Data
-  train_filepath:                 ./data/tap_fun_train.h5
-  test_filepath:                  ./data/tap_fun_test.h5
+  train_filepath:                 ./data/tap_fun_train.parquet
+  test_filepath:                  ./data/tap_fun_test.parquet
   variable_filepath:          ./data/tap4fun.xlsx
   sample_submission_filepath:     ./data/sub_sample.csv
   experiment_directory:           ./workdir
@@ -46,7 +46,7 @@ parameters:
 # Data preparation
   n_cv_splits: 5
   validation_size: 0.2
-  stratified_cv: True
+  stratified_cv: False
   shuffle: 1
 
 # Execution
@@ -62,16 +62,16 @@ parameters:
   lgbm_random_search_runs: 0
   lgbm__device: cpu # gpu cpu
   lgbm__boosting_type: gbdt
-  lgbm__objective: regression
+  lgbm__objective: regression_l1
   lgbm__metric: ["rmse"]
   lgbm__num_tree_per_iteration : 10
-  lgbm__number_boosting_rounds: 500
+  lgbm__number_boosting_rounds: 200
   lgbm__early_stopping_rounds: 50
-  lgbm__learning_rate: 0.1
+  lgbm__learning_rate: 1
   lgbm__max_bin: 300
   lgbm__max_depth: 11
-  lgbm__num_leaves: 100
-  lgbm__min_child_samples: 600
+  lgbm__num_leaves: 50
+  lgbm__min_child_samples: 20
   lgbm__subsample: 1.0
   lgbm__subsample_freq: 1
   lgbm__colsample_bytree: 0.1
@@ -87,7 +87,7 @@ parameters:
   xgb__objective: reg:linear
   xgb__eval_metric: rmse
   xgb__nrounds: 10000
-  xgb__early_stopping_rounds: 100
+  xgb__early_stopping_rounds: 30
   xgb__eta: 0.001
   xgb__max_leaves: 40
   xgb__max_depth: 16
@@ -99,15 +99,6 @@ parameters:
   xgb__lambda: 0.001
   xgb__alpha: 0.001
   xgb__scale_pos_weight: 1
-
-# Random forest
-  rf_random_search_runs: 0
-  rf__n_estimators: 500
-  rf__criterion: gini
-  rf__max_features: 0.2
-  rf__min_samples_split: 10
-  rf__min_samples_leaf: 5
-  rf__class_weight: 1
 
 # Postprocessing
   aggregation_method: rank_mean

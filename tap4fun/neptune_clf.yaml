@@ -32,8 +32,8 @@ exclude:
 parameters:
   is_regression_problem: 0
 # Data
-  train_filepath:                 ./data/tap_fun_train.h5
-  test_filepath:                  ./data/tap_fun_test.h5
+  train_filepath:                 ./data/tap_fun_train.parquet
+  test_filepath:                  ./data/tap_fun_test.parquet
   variable_filepath:          ./data/tap4fun.xlsx
   sample_submission_filepath:     ./data/sub_sample.csv
   experiment_directory:           ./workdir

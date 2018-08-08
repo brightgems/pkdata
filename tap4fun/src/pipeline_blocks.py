@@ -44,11 +44,13 @@ def classifier_light_gbm(features, config, train_mode, suffix, **kwargs):
                                           'y_valid': E('tap4fun', 'y_valid'),
                                           }),
                          experiment_directory=config.pipeline.experiment_directory,
+                         is_trainable= True,
                          **kwargs)
     else:
         light_gbm = Step(name=model_name,
                          transformer=LightGBM(name=model_name, **config.light_gbm),
                          input_steps=[features],
+                         is_trainable= True,
                          adapter=Adapter({'X': E(features.name, 'features')}),
                          experiment_directory=config.pipeline.experiment_directory,
                          **kwargs)
@@ -77,6 +79,7 @@ def classifier_xgb(features, config, train_mode, suffix, **kwargs):
 
         xgboost = Step(name='xgboost{}'.format(suffix),
                        transformer=transformer,
+                       is_trainable= True,
                        input_data=['tap4fun'],
                        input_steps=[features_train, features_valid],
                        adapter=Adapter({'X': E(features_train.name, 'features'),
@@ -90,6 +93,7 @@ def classifier_xgb(features, config, train_mode, suffix, **kwargs):
     else:
         xgboost = Step(name='xgboost{}'.format(suffix),
                        transformer=XGBoost(**config.xgboost),
+                       is_trainable= True,
                        input_steps=[features],
                        adapter=Adapter({'X': E(features.name, 'features')}),
                        experiment_directory=config.pipeline.experiment_directory,
@@ -151,9 +155,9 @@ def feature_extraction(config, train_mode, suffix, **kwargs):
     if train_mode:
         tap4fun, tap4fun_valid = _tap4fun(config, train_mode, suffix, **kwargs)
 
-        tap4fun_agg, tap4fun_agg_valid = _tap4fun_groupby_agg(config, tap4fun, tap4fun_valid, train_mode, suffix, **kwargs)
+        tap4fun_agg, tap4fun_agg_valid = _tap4fun_groupby_agg(config, train_mode, suffix, **kwargs)
 
-        categorical_encoder, categorical_encoder_valid = _categorical_encoders(config, tap4fun, tap4fun_valid, train_mode, suffix, **kwargs)
+        categorical_encoder, categorical_encoder_valid = _categorical_encoders(config, train_mode, suffix, **kwargs)
 
         feature_combiner, feature_combiner_valid = _join_features(
             numerical_features=[tap4fun,
@@ -269,13 +273,12 @@ def _join_features(numerical_features,
         return feature_joiner
 
 
-def _categorical_encoders(config, tap4fun, tap4fun_valid, train_mode, suffix, **kwargs):
+def _categorical_encoders(config, train_mode, suffix, **kwargs):
     categorical_encoder = Step(name='categorical_encoder{}'.format(suffix),
                                transformer=fe.CategoricalEncoder(**config.preprocessing.categorical_encoder),
                                input_data=['tap4fun'],
-                               input_steps=[tap4fun],
                                is_trainable = True,
-                               adapter=Adapter({'X': E(tap4fun.name, 'X'),
+                               adapter=Adapter({'X': E('tap4fun', 'X'),
                                                 'y': E('tap4fun', 'y')}
                                                ),
                                experiment_directory=config.pipeline.experiment_directory,
@@ -284,10 +287,9 @@ def _categorical_encoders(config, tap4fun, tap4fun_valid, train_mode, suffix, **
         categorical_encoder_valid = Step(name='categorical_encoder_valid{}'.format(suffix),
                                          transformer=categorical_encoder.transformer,
                                          input_data=['tap4fun'],
-                                         input_steps=[tap4fun_valid],
                                          is_trainable = True,
                                          adapter=Adapter(
-                                             {'X': E(tap4fun_valid.name, 'X'),
+                                             {'X': E('tap4fun', 'X_valid'),
                                               'y': E('tap4fun', 'y_valid')}
                                          ),
                                          experiment_directory=config.pipeline.experiment_directory,
@@ -297,13 +299,13 @@ def _categorical_encoders(config, tap4fun, tap4fun_valid, train_mode, suffix, **
         return categorical_encoder
 
 
-def _tap4fun_groupby_agg(config, tap4fun, tap4fun_valid, train_mode, suffix, **kwargs):
+def _tap4fun_groupby_agg(config, train_mode, suffix, **kwargs):
     tap4fun_groupby_agg = Step(name='tap4fun_groupby_agg{}'.format(suffix),
                                    transformer=fe.GroupbyAggregate(**config.tap4fun.aggregations),
                                    is_trainable=True,
-                                   input_steps=[tap4fun],
+                                   input_data=['tap4fun'],
                                    adapter=Adapter(
-                                       {'main_table': E(tap4fun.name, 'X')}),
+                                       {'main_table': E('tap4fun', 'X')}),
                                    experiment_directory=config.pipeline.experiment_directory,
                                    **kwargs)
 
@@ -311,9 +313,9 @@ def _tap4fun_groupby_agg(config, tap4fun, tap4fun_valid, train_mode, suffix, **k
 
         tap4fun_groupby_agg_valid = Step(name='tap4fun_groupby_agg_valid{}'.format(suffix),
                                              transformer=tap4fun_groupby_agg.transformer,
-                                             input_steps=[tap4fun_valid],
+                                             input_data=['tap4fun'],
                                              adapter=Adapter(
-                                                 {'main_table': E(tap4fun_valid.name, 'X'),
+                                                 {'main_table': E('tap4fun', 'X_valid'),
                                                   }),
                                              experiment_directory=config.pipeline.experiment_directory,
                                              **kwargs)
@@ -330,14 +332,14 @@ def _tap4fun_cleaning(config, train_mode, suffix, **kwargs):
                                 input_data=['tap4fun'],
                                 adapter=Adapter({'X': E('tap4fun', 'X')}),
                                 experiment_directory=config.pipeline.experiment_directory,
-                                **kwargs)
+                                )
     if train_mode:
         tap4fun_cleaning_valid = Step(name='tap4fun_cleaning_valid{}'.format(suffix),
                                           transformer=tap4fun_cleaning.transformer,
                                           input_data=['tap4fun'],
                                           adapter=Adapter({'X': E('tap4fun', 'X_valid')}),
                                           experiment_directory=config.pipeline.experiment_directory,
-                                          **kwargs)
+                                          )
         return tap4fun_cleaning, tap4fun_cleaning_valid
     else:
         return tap4fun_cleaning
@@ -349,26 +351,17 @@ def _tap4fun(config, train_mode, suffix, **kwargs):
     else:
         tap4fun_cleaning = _tap4fun_cleaning(config, train_mode, suffix, **kwargs)
 
-    tap4fun_variable = Step(name='variable_crafted{}'.format(suffix),
-                       transformer=fe.VarialbeFeatures(),
-                       input_data=['variables'],
-                       adapter=Adapter({'X': E('variables', 'X')}),
-                       experiment_directory=config.pipeline.experiment_directory,
-                       **kwargs)
-
     tap4fun = Step(name='tap4fun_hand_crafted{}'.format(suffix),
                        transformer=fe.Tap4funFeatures(**config.tap4fun.columns),
-                       input_steps=[tap4fun_cleaning,tap4fun_variable],
-                       adapter=Adapter({'X': E(tap4fun_cleaning.name, 'X'),
-                                        'df_variable':E(tap4fun_variable.name,'X')}),
+                       input_steps=[tap4fun_cleaning],
+                       adapter=Adapter({'X': E(tap4fun_cleaning.name, 'X')}),
                        experiment_directory=config.pipeline.experiment_directory,
                        **kwargs)
     if train_mode:
         tap4fun_valid = Step(name='tap4fun_hand_crafted_valid{}'.format(suffix),
                                  transformer=tap4fun.transformer,
-                                 input_steps=[tap4fun_cleaning_valid,tap4fun_variable],
-                                 adapter=Adapter({'X': E(tap4fun_cleaning_valid.name, 'X'),
-                                                  'df_variable':E(tap4fun_variable.name,'X')}),
+                                 input_steps=[tap4fun_cleaning_valid],
+                                 adapter=Adapter({'X': E(tap4fun_cleaning_valid.name, 'X')}),
                                  experiment_directory=config.pipeline.experiment_directory,
                                  **kwargs)
         return tap4fun, tap4fun_valid

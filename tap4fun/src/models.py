@@ -9,7 +9,7 @@ from sklearn.preprocessing import StandardScaler
 from steppy.base import BaseTransformer
 from toolkit.sklearn_transformers.models import SklearnClassifier
 import xgboost as xgb
-
+from matplotlib import pyplot as plt
 from .utils import get_logger
 
 logger = get_logger()
@@ -140,6 +140,9 @@ class LightGBM(BaseTransformer):
                                    feval=self.evaluation_function,
                                    callbacks=self.callbacks,
                                    **kwargs)
+        lgb.plot_importance(self.estimator)
+        plt.rcParams['figure.figsize'] = (16.0, 8.0)
+        plt.savefig('./output/feature_importance.png',dpi=300)
         return self
 
     def transform(self, X, **kwargs):
@@ -181,7 +184,6 @@ class LightGBM(BaseTransformer):
 def get_sklearn_classifier(ClassifierClass, normalize, **kwargs):
     class SklearnBinaryClassifier(SklearnClassifier):
         def transform(self, X, y=None, target=1, **kwargs):
-            import pdb; pdb.set_trace()
             prediction = self.estimator.predict_proba(X)[:, target]
             return {'prediction' : prediction}
 

@@ -30,7 +30,6 @@ def evaluate(pipeline_name, dev_mode):
 @click.option('-s', '--submit_predictions', help='submit predictions if true', type=bool, required=False)
 @click.option('-d', '--dev_mode', help='if true only a small sample of data will be used', required=False)
 def predict(pipeline_name, dev_mode, submit_predictions):
-    import pdb; pdb.set_trace()
     pipeline_manager.predict(pipeline_name, dev_mode, submit_predictions)
 
 
@@ -74,6 +73,12 @@ def train_evaluate_cv(pipeline_name, dev_mode):
 @click.option('-d', '--dev_mode', help='if true only a small sample of data will be used', required=False)
 def train_evaluate_predict_cv(pipeline_name, submit_predictions, dev_mode):
     pipeline_manager.train_evaluate_predict_cv(pipeline_name, dev_mode, submit_predictions)
+
+
+
+@main.command()
+def prepare_dataset():
+    pipeline_manager.prepare_dataset()
 
 
 @main.command()

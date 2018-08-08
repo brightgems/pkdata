@@ -17,8 +17,8 @@ env = Env()
 # Read .env into os.environ
 env.read_env()
 
-
 def make_submission(pipeline_name, submission_filepath):
+    logger = logging.getLogger('tap4fun')
     logger.info('making dcjingsai submit...')
     user =env.str('pkbigdata_user', None)
     password = env.str('pkbigdata_password', None)

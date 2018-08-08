@@ -6,7 +6,6 @@ import pandas as pd
 from sklearn.externals import joblib
 from steppy.base import BaseTransformer
 from steppy.utils import get_logger
-from sklearn.preprocessing import MinMaxScaler
 from toolz.curried import pipe, map, filter, get
 from .utils import compress_dtypes
 
@@ -160,16 +159,6 @@ class GroupbyAggregateMerge(BaseTransformer):
         return '{}_{}_{}_{}'.format(self.table_name, '_'.join(groupby_cols), agg, select)
 
 
-class VarialbeFeatures(BaseTransformer):
-
-    def transform(self, X, **kwargs):
-        X = X.iloc[:,range(3)].rename(columns={'字段名':'column','字段解释':'desc','数据时间':'cycle'})
-        X['cat'] = X.column.str.split('_').apply(lambda x: x[0])
-        X.loc[X.column.str.find('acceleration')>0,'cat'] = 'acceleration'
-        X.loc[2:11,'cat'] = 'resource'
-        X.loc[12:23,'cat'] = 'army'
-        return {'X':X}
-
 class Tap4funFeatures(BaseTransformer):
     def __init__(self, categorical_columns, numerical_columns):
         self.categorical_columns = categorical_columns
@@ -187,7 +176,6 @@ class Tap4funFeatures(BaseTransformer):
             self.categorical_columns = \
                 pipe(self.categorical_columns, filter(lambda x: x in cat_features), list)
         
-        
         if not self.numerical_columns:
             self.numerical_columns = num_features
         else:
@@ -198,110 +186,10 @@ class Tap4funFeatures(BaseTransformer):
         unused_features = pipe(X.columns, filter(lambda x: x not in selection),list)
         logger.info("Useless features:\n"+str(unused_features))
 
-    def transform(self, X,df_variable, **kwargs):
-        # share var
-        scaler =MinMaxScaler()
-        # payment features
-        X['pay_price_group']=pd.cut( X['pay_price'],[-0.01,0,1,10,100,1000,5000,10000])
-        X['is_active_user'] =X['avg_online_minutes']>2
-        X['avg_pay'] = X['pay_price']/X['pay_count']
-        X['avg_pay_group'] = pd.cut(X['avg_pay'],[-0.01,0,1,5,10,20,50,100])
-        X['pay_count_group']=pd.cut( X['pay_count'],[-1,0,1,2,3,4,200])
-        X['avg_online_minutes_group'] = pd.cut(X['avg_online_minutes'], [-0.001,0,2,5,20,60,120,300,1200,2400],include_lowest=True)
-        X =X.assign(pay_price_per_hour = lambda x: x.pay_price/x.avg_online_minutes/60)
-        X.loc[X.avg_online_minutes==0,'pay_price_per_hour'] = 0
-        # date features
-        X['register_date']=X.register_time.apply(lambda x:pd.to_datetime(x).strftime('%Y-%m-%d'))
-        X['register_date'] = X['register_date'].astype(np.datetime64)
-        X = X.assign(dayofweek = lambda x: x['register_date'].dt.dayofweek)
-        X = X.assign(day = lambda x: x['register_date'].dt.day)
-        X = X.assign(week = lambda x: x['register_date'].dt.week)
-        # day#
-        days = sorted(X.register_date.unique())
-        days = dict(zip(days, range(len(days))))
-        X['day_num'] = X.register_date.map(days)
-        # time class
-        def map_to_timecls(x):
-            if x<=7:
-                return 'night'
-            elif x<=12:
-                return 'morning'
-            elif x<=18:
-                return 'afternoon'
-            else:
-                return 'evening'
-        X['register_timecls'] = X.assign(
-                register_timecls = lambda x: x['register_time'].dt.hour
-            )['register_timecls'].map(map_to_timecls)
-        # research features
-        sr_var = list(df_variable[df_variable.cat=='sr'].column.values)
-        df_srdesc = X.loc[:,sr_var].sample(frac=.1).describe().transpose()
-        cols_sr_level = df_srdesc[df_srdesc['max']==1].index
-        cols_sr_main = df_srdesc[df_srdesc['max']>1].index
-        X['sr_level_score'] = X.filter(cols_sr_level).sum(axis=1)
-        X['sr_main_score']=X.filter(cols_sr_main).sum(axis=1)
-
-        for function_name in ['mean','var','min','max']:
-            X['sr_main_{}'.format(function_name)] = eval('np.{}'.format(function_name))(
-                X[cols_sr_main], axis=1)
-        # building features
-        bd_var = list(df_variable[df_variable.cat=='bd'].column.values)
-        X['bd_main_score']=X.loc[:,bd_var].sum(axis=1)
-        for function_name in ['mean','var','min','max']:
-            X['bd_main_{}'.format(function_name)] = eval('np.{}'.format(function_name))(
-                X.loc[:,bd_var], axis=1)
-        acct_value = X[['bd_main_score','sr_level_score','sr_main_score']].sum(axis=1)
+    def transform(self, X, **kwargs):
         
-        acct_value_zs = np.sum(scaler.fit_transform(X[['bd_main_score','sr_level_score','sr_main_score']]),axis=1)
-        X['acct_value'] =acct_value
-        X['acct_value_zs'] =acct_value_zs
-        
-        # gain/loss features
-        def merge_add_reduce(cat):
-            vars = df_variable[df_variable.cat==cat].column
-            vars_add = pipe(vars, filter(lambda x: x.find('add_')>0),list)
-            vars_rdc = pipe(vars, filter(lambda x: x.find('reduce_')>0),list)
-            X[cat+'_add']= X[vars_add].sum(axis=1)
-            X[cat+'_reduce']= X[vars_rdc].sum(axis=1)
-            subcats = np.unique([str.join('_',a.split('_')[:-2]) for a in vars])
-            for each in subcats:
-                try:
-                    X[each+'_reduce%']= X[each+'_reduce_value']/(X[each+'_add_value']+1)
-                    X[each+'_net']= X[each+'_add_value'] - X[each+'_reduce_value']
-                except:
-                    pass
-            
-        cat_set = df_variable[df_variable.column.str.find('reduce')>0].cat.unique()
-        for cat in cat_set:
-            merge_add_reduce(cat)
-        # war features
-        X['pve_launch%'] = X['pve_lanch_count']/(1+X['pve_battle_count'])
-        X['pve_win%'] = X['pve_win_count']/(1+X['pve_battle_count'])
-        X['pvp_launch%'] = X['pvp_lanch_count']/(1+X['pvp_battle_count'])
-        X['pvp_win%'] = X['pvp_win_count']/(1+X['pvp_battle_count'])
-        X['battle_count'] = X['pvp_win_count']+X['pve_win_count']
-        X['battle_win'] = X['pve_battle_count']+X['pvp_battle_count']
-        X['battle_launch%'] = (X['pve_battle_count']+X['pvp_battle_count'])/(1+X['battle_count'] )
-        X['battle_win%'] = (X['pve_win_count']+X['pvp_win_count'])/(1+X['battle_count'])
-
-        # achievement features
-        X['register_timecls']=X.assign(register_timecls = lambda x: x['register_time'].dt.hour)['register_timecls'].map(map_to_timecls)
-        X['acceleration_army_reduce_ratio'] = X['acceleration_reduce']/(X['army_reduce']+1)
-        X['resource_army_reduce_ratio'] = X['resource_reduce']/(X['army_reduce']+1)
-        X['acceleration_resource_reduce_ratio'] = X['acceleration_reduce']/(X['resource_reduce']+1)
-        X['acceleration_army_add_ratio'] = X['acceleration_add']/(X['army_add']+1)
-        X['resource_army_add_ratio'] = X['resource_add']/(X['army_add']+1)
-        X['acceleration_add_add_ratio'] = X['acceleration_add']/(X['resource_add']+1)
-        X['bd_sr_product']= X['bd_main_score']*X['sr_main_score']
-        X['bd_sr_ratio']= X['bd_main_score']/(X['sr_main_score']+1)
-        X['acceleration_per_hour'] = X['acceleration_reduce']/(1+X['avg_online_minutes'])/60 
-        X['sr_level_score_per_hour']= X['sr_level_score']/(1+X['avg_online_minutes'])/60
-        X['army_reduce_per_battle'] = X['army_reduce']/(X['battle_count']+1)
-        X['sr_army_prod'] = X['sr_level_score']*X['army_add']
-        X['army_per_hour'] = X['army_reduce']/(1+X['avg_online_minutes'])/60
-        X['bd_resource_ratio'] = X['resource_reduce']/(1+X['bd_main_score'])
-        X = compress_dtypes(X)
         self.select_columns(X)
+        X[self.numerical_columns].fillna(0, inplace=True)
         return {'numerical_features': X[self.numerical_columns],
                 'categorical_features': X[self.categorical_columns],
                 'X':X

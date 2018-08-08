@@ -6,7 +6,7 @@ from sklearn.metrics import roc_auc_score
 from .utils import read_params, parameter_eval, rmse
 
 ctx = neptune.Context()
-params = read_params(ctx, fallback_file='./neptune_clf.yaml')
+params = read_params(ctx, fallback_file='./neptune_reg.yaml')
 
 RANDOM_SEED = 90210
 DEV_SAMPLE_SIZE = 5000
@@ -26,18 +26,20 @@ CATEGORICAL_COLUMNS = [
     'pay_price_group',
     'register_timecls',
     'avg_online_minutes_group',
-    'pay_count_group',
-    'avg_pay_group',
 ]
 
 NUMERICAL_COLUMNS = [
     # active/payment features
-    'avg_online_minutes', 'pay_price', 'pay_price_per_hour'
+    'avg_online_minutes', 'pay_price', 'pay_price_per_hour',
+    'dayofweek', 
+    'sr_main_mean', 'sr_level_mean', 'sr_main_var', 'sr_level_var',
+     'sr_main_min', 'sr_level_min', 'sr_main_max', 'sr_level_max', 
+     'bd_main_mean', 'bd_main_var', 'bd_main_min', 'bd_main_max', 
     # war features
     'battle_count',
-    'battle_win%'
+    'battle_win%',
     # achievement features
-    'acct_value',
+    'resource_add', #'acct_value', 
     'acct_value_zs',
     'sr_main_score', 'sr_level_score',
     'bd_main_score', 'army_add', 'resource_reduce',
@@ -83,6 +85,10 @@ USELESS_COLUMNS = [
 
 TAP4FUN_AGGREGATION_RECIPIES = [
     (['pay_price_group'], [('avg_online_minutes', 'mean'),
+                           ('pay_count', 'mean'),
+                           ('battle_count', 'mean'),
+                           ('acct_value', 'mean')]),
+    (['avg_online_minutes_group'], [('avg_online_minutes', 'mean'),
                            ('pay_count', 'mean'),
                            ('battle_count', 'mean'),
                            ('acct_value', 'mean')]),

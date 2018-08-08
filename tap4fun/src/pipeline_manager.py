@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import gmean
 from deepsense import neptune
-from sklearn.metrics import r2_score, mean_squared_error, f1_score, accuracy_score, recall_score, roc_auc_score, \
+from sklearn.metrics import mean_squared_error, f1_score, accuracy_score, recall_score, roc_auc_score, \
     precision_score, precision_recall_curve, confusion_matrix
 from sklearn.model_selection import train_test_split, KFold, StratifiedKFold
 import requests
@@ -14,6 +14,7 @@ from . import pipeline_config as cfg
 from .pipeline_config import score_name, score_function
 from .pipelines import PIPELINES
 from .utils import init_logger, set_seed, make_submission, create_submission, verify_submission, calculate_rank
+from .preprocess import prepare_dataset
 
 set_seed(cfg.RANDOM_SEED)
 logger = init_logger()
@@ -57,6 +58,8 @@ class PipelineManager():
     def submit_result(self):
         make_submission('','./workdir/submission.csv')
 
+    def prepare_dataset(self):
+        prepare_dataset()
 
 def train(pipeline_name, dev_mode):
     logger.info('TRAINING')
@@ -119,7 +122,7 @@ def evaluate(pipeline_name, dev_mode):
     if isinstance(PIPELINES[pipeline_name], dict):
         pipeline = PIPELINES[pipeline_name]['inference'](config=cfg.SOLUTION_CONFIG)
     else:
-        pipeline = PIPELINES[pipeline_name](config=cfg.SOLUTION_CONFIG, train_mode=True)
+        pipeline = PIPELINES[pipeline_name](config=cfg.SOLUTION_CONFIG, train_mode=False)
     pipeline.clean_cache()
     logger.info('Start pipeline transform')
     output = pipeline.transform(eval_data)
@@ -143,7 +146,7 @@ def predict(pipeline_name, dev_mode, submit_predictions):
     if isinstance(PIPELINES[pipeline_name], dict):
         pipeline = PIPELINES[pipeline_name]['inference'](config=cfg.SOLUTION_CONFIG)
     else:
-        pipeline = PIPELINES[pipeline_name](config=cfg.SOLUTION_CONFIG, train_mode=True)
+        pipeline = PIPELINES[pipeline_name](config=cfg.SOLUTION_CONFIG, train_mode=False)
 
     pipeline.clean_cache()
     logger.info('Start pipeline transform')
@@ -268,7 +271,9 @@ def train_evaluate_predict_cv(pipeline_name, dev_mode, submit_predictions):
 
 
 def _read_frame(filepath,nrows=None):
-    if os.path.splitext(filepath)[-1]=='.h5':
+    if os.path.splitext(filepath)[-1]=='.parquet':
+        df = pd.read_parquet(filepath)
+    elif os.path.splitext(filepath)[-1]=='.h5':
         df = pd.read_hdf(filepath, stop=nrows)
     elif os.path.splitext(filepath)[-1]=='.xlsx':
         df = pd.read_excel(filepath,sheet_name='Sheet1')
@@ -308,6 +313,25 @@ def _preprocess_target_feature(df):
             drop_cols = ['prediction_pay_price','is_future_pay']
         else:
             drop_cols = ['prediction_pay_price','prediction_future_pay_price']
+    # =========make categical features=========
+    df['pay_price_group']=pd.cut( df['pay_price'],[-0.01,0,1,10,100,1000,5000,10000])
+    df['pay_count_group']=pd.cut( df['pay_count'],[-1,0,1,2,3,4,200])
+    df['avg_online_minutes_group'] = pd.cut(df['avg_online_minutes'], 
+            [-0.001,0,2,5,20,60,120,300,1200,2400],include_lowest=True
+    )
+    # time class
+    def map_to_timecls(hour):
+        if hour<=7:
+            return 'night'
+        elif hour<=12:
+            return 'morning'
+        elif hour<=18:
+            return 'afternoon'
+        else:
+            return 'evening'
+    df['register_timecls'] = df.assign(
+            register_timecls = lambda df_all: df_all['register_time'].dt.hour
+        )['register_timecls'].map(map_to_timecls)
     return df
 
 def _get_fold_generator(target_values):
@@ -349,7 +373,7 @@ def _fold_fit_evaluate_predict_loop(train_data_split, valid_data_split, tables, 
 
 
 def _fold_fit_evaluate_loop(train_data_split, valid_data_split, tables, fold_id, pipeline_name):
-    train_data = {'tapf4un': {'X': train_data_split.drop(cfg.TARGET_COLUMNS, axis=1),
+    train_data = {'tap4fun': {'X': train_data_split.drop(cfg.TARGET_COLUMNS, axis=1),
                                   'y': train_data_split[cfg.TARGET_COLUMNS].values.reshape(-1),
                                   'X_valid': valid_data_split.drop(cfg.TARGET_COLUMNS, axis=1),
                                   'y_valid': valid_data_split[cfg.TARGET_COLUMNS].values.reshape(-1),
@@ -357,7 +381,7 @@ def _fold_fit_evaluate_loop(train_data_split, valid_data_split, tables, fold_id,
                   'variables': {'X':tables.variables}                                  
                   }
 
-    valid_data = {'tapf4un': {'X': valid_data_split.drop(cfg.TARGET_COLUMNS, axis=1),
+    valid_data = {'tap4fun': {'X': valid_data_split.drop(cfg.TARGET_COLUMNS, axis=1),
                                   'y': None,
                                   },
                   'variables': {'X':tables.variables}                                  
@@ -387,7 +411,7 @@ def _fold_fit_evaluate_loop(train_data_split, valid_data_split, tables, fold_id,
 
     y_valid_pred = output_valid['prediction']
     y_valid_true = valid_data_split[cfg.TARGET_COLUMNS].values
-    score = r2_score(y_valid_true, y_valid_pred)
+    score = score_function(y_valid_true, y_valid_pred)
 
     return score, y_valid_pred, pipeline
 
