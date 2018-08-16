@@ -48,6 +48,7 @@ class RandomSearchOptimizer(BaseTransformer):
             y_pred_valid = transformer.transform(X_valid)
             y_pred_valid_value = list(y_pred_valid.values())[0]
             run_score = self.score_func(y_valid, y_pred_valid_value)
+            logger.info("run_score: {}".format(run_score))
             results.append((run_score, param_set))
 
             del y_pred_valid, transformer

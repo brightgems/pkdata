@@ -1,6 +1,7 @@
+# coding: utf-8
 import os
 import shutil
-
+import random
 from attrdict import AttrDict
 import numpy as np
 import pandas as pd
@@ -13,7 +14,7 @@ import requests
 from . import pipeline_config as cfg
 from .pipeline_config import score_name, score_function
 from .pipelines import PIPELINES
-from .utils import init_logger, set_seed, make_submission, create_submission, verify_submission, calculate_rank
+from .utils import compress_dtypes, init_logger, set_seed, make_submission, create_submission, verify_submission, calculate_rank
 from .preprocess import prepare_dataset
 
 set_seed(cfg.RANDOM_SEED)
@@ -294,6 +295,8 @@ def _read_data(dev_mode, read_train=True, read_test=False):
     if read_train:
         df = _read_frame(params.train_filepath, nrows=nrows)
         df = _preprocess_target_feature(df)
+        # 只保留付费用户
+        df = df[df['avg_online_minutes']>10].reset_index()
         raw_data['train'] = df
     if read_test:
         df = _read_frame(params.test_filepath, nrows=nrows)
@@ -332,6 +335,8 @@ def _preprocess_target_feature(df):
     df['register_timecls'] = df.assign(
             register_timecls = lambda df_all: df_all['register_time'].dt.hour
         )['register_timecls'].map(map_to_timecls)
+    
+    df = compress_dtypes(df)
     return df
 
 def _get_fold_generator(target_values):

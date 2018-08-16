@@ -1,8 +1,8 @@
 import logging
 import os
-import random
 import sys
-
+import string
+import random
 import numpy as np
 import pandas as pd
 import yaml
@@ -165,9 +165,18 @@ def compress_dtypes(df_train):
         best_type = list(its.filterfalse(
             lambda x: max > x[1], float_types_max))
         column_types[field] = best_type[0][0]
-    for field in df_train.select_dtypes('object').columns:
-        column_types[field] = 'category'
+    # category column don't support merge when aggregate step
+    for field in df_train.select_dtypes('category').columns:
+        column_types[field] = 'object'
     # apply compressed type
     for c, t in column_types.items():
         df_train[c] = df_train[c].astype(t)
     return df_train
+
+
+def get_random_string():
+    min_char = 8
+    max_char = 12
+    allchar = string.ascii_letters + string.digits
+    password = "".join(random.choice(allchar) for x in range(random.randint(min_char, max_char)))
+    return password

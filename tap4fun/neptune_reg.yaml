@@ -64,18 +64,18 @@ parameters:
   lgbm__boosting_type: gbdt
   lgbm__objective: regression_l1
   lgbm__metric: ["rmse"]
-  lgbm__num_tree_per_iteration : 10
-  lgbm__number_boosting_rounds: 200
-  lgbm__early_stopping_rounds: 50
-  lgbm__learning_rate: 1
+  lgbm__num_tree_per_iteration : 20
+  lgbm__number_boosting_rounds: 500
+  lgbm__early_stopping_rounds: 200
+  lgbm__learning_rate: 0.1
   lgbm__max_bin: 300
   lgbm__max_depth: 11
-  lgbm__num_leaves: 50
-  lgbm__min_child_samples: 20
-  lgbm__subsample: 0.3
-  lgbm__subsample_freq: 1
-  lgbm__colsample_bytree: 0.1
-  lgbm__min_gain_to_split: 0.5
+  lgbm__num_leaves: 100
+  lgbm__min_child_samples: 5
+  lgbm__subsample: 0.8
+  lgbm__subsample_freq: 2
+  lgbm__colsample_bytree: 0.6
+  lgbm__min_gain_to_split: 0.6
   lgbm__reg_lambda: 50.0
   lgbm__reg_alpha: 0.0
   lgbm__scale_pos_weight: 1
@@ -85,7 +85,7 @@ parameters:
   xgb__booster: gblinear
   xgb__tree_method: hist # gpu_hist  # auto  hist
   xgb__objective: reg:linear
-  xgb__eval_metric: rmse
+  xgb__eval_metric: ['rmse']
   xgb__nrounds: 10000
   xgb__early_stopping_rounds: 30
   xgb__eta: 0.001

@@ -7,11 +7,33 @@ from sklearn.externals import joblib
 from steppy.base import BaseTransformer
 from steppy.utils import get_logger
 from toolz.curried import pipe, map, filter, get
-from .utils import compress_dtypes
+from .utils import compress_dtypes, get_random_string
+from gplearn.genetic import SymbolicRegressor
+from sklearn.feature_selection import SelectKBest, SelectFromModel, chi2, f_classif
 
 logger = get_logger()
 
+class SelectKBestFeatures(BaseTransformer):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.k = kwargs.get('k', 20)
+        self.metric = kwargs.get('metric', f_classif)
+    
+    def fit(self, X, y, **kwargs):
+        self.estimator = SelectKBest(self.metric, k=self.k).fit(X, y)
+        
+    def transform(self, X, **kwargs):
+        k_features = self.estimator.transform(X)
+        return {'features': k_features}
 
+    def load(self, filepath):
+        self.estimator = joblib.load(filepath)
+        return self
+
+    def persist(self, filepath):
+        joblib.dump(self.estimator, filepath)
+
+        
 class FeatureJoiner(BaseTransformer):
     def transform(self, numerical_feature_list, categorical_feature_list, **kwargs):
         features = numerical_feature_list + categorical_feature_list
@@ -68,29 +90,43 @@ class GroupbyAggregate(BaseTransformer):
     def __init__(self, groupby_aggregations):
         super().__init__()
         self.groupby_aggregations = groupby_aggregations
-        self.features = []
         self.feature_names = []
 
     def fit(self, main_table, **kwargs):
+        self.features = []
         for groupby_cols, specs in self.groupby_aggregations:
             group_object = main_table.groupby(groupby_cols)
             for select, agg in specs:
-                groupby_aggregate_name = self._create_colname_from_specs(groupby_cols, select, agg)
-
-                group_features = group_object[select].agg(agg).reset_index() \
-                    .rename(index=str,
+                if str(type(agg)) == "<class 'function'>":
+                    groupby_aggregate_name = self._create_colname_from_specs(groupby_cols, select, get_random_string())
+                    group_features = group_object[select].apply(agg).reset_index()
+                else:
+                    groupby_aggregate_name = self._create_colname_from_specs(groupby_cols, select, agg)
+                    group_features = group_object[select].agg(agg).reset_index()
+                group_features = group_features.rename(index=str,
                             columns={select: groupby_aggregate_name})[groupby_cols + [groupby_aggregate_name]]
-
-                self.features.append((groupby_cols, group_features))
+                group_features = compress_dtypes(group_features)
+                self.features.append((groupby_cols, group_features, select))
                 self.feature_names.append(groupby_aggregate_name)
         return self
 
     def transform(self, main_table, **kwargs):
-        for groupby_cols, groupby_features in self.features:
+        neural_feature_names = []
+        
+        for index, (groupby_cols, groupby_features, select) in enumerate(self.features):
+            feature_name = self.feature_names[index] 
+            print(feature_name)
             main_table = main_table.merge(groupby_features,
                                           on=groupby_cols,
                                           how='left')
-
+            # create neural features
+            
+            if any([feature_name.endswith(func) for func in ['min','max','mean','mode']]):
+                neural_feature_name = feature_name +'_neural'
+                main_table[neural_feature_name] =  main_table[select]/(main_table[feature_name]+1)
+                if neural_feature_name not in self.feature_names:
+                    neural_feature_names.append(neural_feature_name)
+        self.feature_names.extend(neural_feature_names)
         return {'numerical_features': main_table[self.feature_names].astype(np.float32)}
 
     def load(self, filepath):
@@ -104,8 +140,8 @@ class GroupbyAggregate(BaseTransformer):
                   'feature_names': self.feature_names}
         joblib.dump(params, filepath)
 
-    def _create_colname_from_specs(self, groupby_cols, agg, select):
-        return '{}_{}_{}'.format('_'.join(groupby_cols), agg, select)
+    def _create_colname_from_specs(self, groupby_cols, select, agg):
+        return '{}_{}_{}'.format('_'.join(groupby_cols), select, agg )
 
 
 class GroupbyAggregateMerge(BaseTransformer):
@@ -168,7 +204,7 @@ class Tap4funFeatures(BaseTransformer):
         """
             adapt to feature selection by configuration
         """
-        cat_features = X.select_dtypes('category').columns
+        cat_features = X.select_dtypes('object').columns
         num_features = X.select_dtypes(np.number).columns
         if not self.categorical_columns:
             self.categorical_columns = cat_features

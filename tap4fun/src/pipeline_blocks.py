@@ -2,12 +2,33 @@ from functools import partial
 
 from steppy.adapter import Adapter, E
 from steppy.base import Step, make_transformer
-
 from . import feature_extraction as fe
 from . import data_cleaning as dc
 from .hyperparameter_tuning import RandomSearchOptimizer, NeptuneMonitor, PersistResults
-from .models import get_sklearn_classifier, XGBoost, LightGBM
+from .models import get_sklearn_classifier, XGBoost, LightGBM, ThresholdSelection, AvgTransformer
 from .pipeline_config import params, score_function
+
+
+def classifier_select_best_threshold(model_step, config, train_mode,suffix, **kwargs):
+    if train_mode:
+        select_best_threshold = Step(name='select_best_threshold{}'.format(suffix),
+                                transformer=ThresholdSelection(),
+                                input_data=['tap4fun'],
+                                input_steps=[model_step],
+                                is_trainable= True,
+                                adapter=Adapter({'prediction': E(model_step.name, 'prediction'),
+                                                 'actual': E('tap4fun', 'y')
+                                                }),
+                                experiment_directory=config.pipeline.experiment_directory,
+                                **kwargs)
+    else:
+        select_best_threshold = Step(name='select_best_threshold{}'.format(suffix),
+                                transformer=ThresholdSelection(),
+                                input_steps=[model_step],
+                                adapter=Adapter({'prediction': E(model_step.name, 'prediction')}),
+                                experiment_directory=config.pipeline.experiment_directory,
+                                **kwargs)
+    return select_best_threshold
 
 
 def classifier_light_gbm(features, config, train_mode, suffix, **kwargs):
@@ -54,6 +75,8 @@ def classifier_light_gbm(features, config, train_mode, suffix, **kwargs):
                          adapter=Adapter({'X': E(features.name, 'features')}),
                          experiment_directory=config.pipeline.experiment_directory,
                          **kwargs)
+
+    
     return light_gbm
 
 
@@ -174,13 +197,13 @@ def feature_extraction(config, train_mode, suffix, **kwargs):
             train_mode=train_mode,
             suffix=suffix,
             **kwargs)
-
+        
         return feature_combiner, feature_combiner_valid
     else:
         tap4fun = _tap4fun(config, train_mode, suffix, **kwargs)
 
-        tap4fun_agg = _tap4fun_groupby_agg(config,tap4fun, tap4fun, train_mode, suffix, **kwargs)
-        categorical_encoder = _categorical_encoders(config, tap4fun, tap4fun, train_mode, suffix, **kwargs)
+        tap4fun_agg = _tap4fun_groupby_agg(config, train_mode, suffix, **kwargs)
+        categorical_encoder = _categorical_encoders(config, train_mode, suffix, **kwargs)
         feature_combiner = _join_features(numerical_features=[tap4fun,
                                                               tap4fun_agg,
                                                               ],
@@ -312,8 +335,9 @@ def _tap4fun_groupby_agg(config, train_mode, suffix, **kwargs):
     if train_mode:
 
         tap4fun_groupby_agg_valid = Step(name='tap4fun_groupby_agg_valid{}'.format(suffix),
-                                             transformer=tap4fun_groupby_agg.transformer,
+                                             transformer=fe.GroupbyAggregate(**config.tap4fun.aggregations),
                                              input_data=['tap4fun'],
+                                             is_trainable=True,
                                              adapter=Adapter(
                                                  {'main_table': E('tap4fun', 'X_valid'),
                                                   }),

@@ -11,7 +11,7 @@ class Tap4funCleaning(BaseTransformer):
         super().__init__()
 
     def transform(self, X):
-        X = compress_dtypes(X)
+        
 
         return {'X': X}
 

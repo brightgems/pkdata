@@ -4,9 +4,11 @@ from attrdict import AttrDict
 from deepsense import neptune
 from sklearn.metrics import roc_auc_score
 from .utils import read_params, parameter_eval, rmse
+import numpy as np
+
 
 ctx = neptune.Context()
-params = read_params(ctx, fallback_file='./neptune_reg.yaml')
+params = read_params(ctx, fallback_file='./neptune_clf.yaml')
 
 RANDOM_SEED = 90210
 DEV_SAMPLE_SIZE = 5000
@@ -17,7 +19,7 @@ if is_regression_problem:
     TARGET_COLUMNS = ['prediction_future_pay_price']
     score_function = rmse
     score_name = 'RMSE'
-else:    
+else:
     TARGET_COLUMNS = ['is_future_pay']
     score_function = roc_auc_score
     score_name = 'ROC_AUC'
@@ -30,16 +32,17 @@ CATEGORICAL_COLUMNS = [
 
 NUMERICAL_COLUMNS = [
     # active/payment features
-    'avg_online_minutes', 'pay_price', 'pay_price_per_hour',
-    'dayofweek', 
+    'avg_online_minutes', 'pay_price', 'pay_price_per_hour', 'is_active_user',
+    'dayofweek', 'hour',
     'sr_main_mean', 'sr_level_mean', 'sr_main_var', 'sr_level_var',
-     'sr_main_min', 'sr_level_min', 'sr_main_max', 'sr_level_max', 
-     'bd_main_mean', 'bd_main_var', 'bd_main_min', 'bd_main_max', 
+    'sr_main_min', 'sr_level_min', 'sr_main_max', 'sr_level_max',
+    'bd_main_mean', 'bd_main_var', 'bd_main_min', 'bd_main_max',
     # war features
+    'pvp_battle_count', 'pvp_lanch_count', 'pvp_win_count',
     'battle_count',
     'battle_win%',
     # achievement features
-    'resource_add', #'acct_value', 
+    'resource_add',
     'acct_value_zs',
     'sr_main_score', 'sr_level_score',
     'bd_main_score', 'army_add', 'resource_reduce',
@@ -65,33 +68,66 @@ NUMERICAL_COLUMNS = [
     'sr_army_prod',
     'bd_sr_ratio',
     'bd_sr_product',
-    'acceleration_army_reduce_ratio', 
-    'resource_army_reduce_ratio', 
-    'acceleration_resource_reduce_ratio', 
-    'acceleration_army_add_ratio', 
-    'resource_army_add_ratio', 
-    'acceleration_add_add_ratio', 
-    'acceleration_per_hour', 
-    'sr_level_score_per_hour', 
-    'army_per_hour', 
+    'acceleration_army_reduce_ratio',
+    'resource_army_reduce_ratio',
+    'acceleration_resource_reduce_ratio',
+    'acceleration_army_add_ratio',
+    'resource_army_add_ratio',
+    'acceleration_resource_add_ratio',
+    'acceleration_resource_cross_ratio',
+    'acceleration_army_cross_ratio',
+    'acceleration_per_hour',
+    'sr_level_score_per_hour',
+    'army_per_hour',
     'bd_resource_ratio'
 ]
 
 USELESS_COLUMNS = [
+    'is_future_pay',
     'prediction_pay_price',
     'prediction_future_pay_price',
     'user_id',
+    'day', 'week', 'day_num',
 ]
 
+# ensure USELESS_COLUMNS never appear in NUMERICAL_COLUMNS
+NUMERICAL_COLUMNS = list(filter(lambda x: x not in USELESS_COLUMNS, NUMERICAL_COLUMNS))
+
 TAP4FUN_AGGREGATION_RECIPIES = [
-    (['pay_price_group'], [('avg_online_minutes', 'mean'),
-                           ('pay_count', 'mean'),
-                           ('battle_count', 'mean'),
-                           ('acct_value', 'mean')]),
-    (['avg_online_minutes_group'], [('avg_online_minutes', 'mean'),
-                           ('pay_count', 'mean'),
-                           ('battle_count', 'mean'),
-                           ('acct_value', 'mean')]),
+    (['day_num'], [('user_id', 'count'),
+                   ('avg_online_minutes', 'mean'),
+                   ('avg_online_minutes', lambda x: x.quantile(0.95)-x.quantile(0.05)),
+                   ('avg_online_minutes', lambda x: x.skew()),
+                   ('avg_online_minutes', lambda x: x.median()),
+                   ('avg_online_minutes', lambda x: x.max()-x.min()),
+                   ('pay_price', 'mean'),
+                   ('pay_price', 'sum'),
+                   ('pay_count', 'mean'),
+                   ('pay_count', 'sum'),
+                   ('pve_battle_count', 'mean'),
+                   ('acct_value_zs', 'mean'),
+                   ('acct_value_zs', lambda x: x.quantile(0.95)-x.quantile(0.05)),
+                   ('acct_value_zs', lambda x: x.skew()),
+                   ('acct_value_zs', lambda x: x.median()),
+                   ('acct_value_zs', lambda x: x.max()-x.min()),
+                   ]),
+    (['avg_online_minutes_group', 'day_num'],[
+                    ('user_id', 'count'),
+                    ('acct_value_zs', 'mean'),
+                    ('pay_price_per_hour', 'mean'),
+                    ('army_per_hour', 'mean'),
+                   ('acct_value_zs', lambda x: x.quantile(0.95)-x.quantile(0.05)),
+                   ('acct_value_zs', lambda x: x.skew()),
+                   ('acct_value_zs', lambda x: x.median()),
+                   ('acct_value_zs', lambda x: x.max()-x.min()),
+                    ]),
+    (['register_timecls', 'day_num'], [('user_id', 'count'),
+                            ('pay_price_per_hour','mean'),
+                            ('pay_price_per_hour','var'),
+                            ('avg_online_minutes', 'mean'),
+                            ('pay_count', 'mean'),
+                            ('pve_battle_count', 'mean'),
+                            ('acct_value_zs', 'mean')]),
 ]
 
 SOLUTION_CONFIG = AttrDict({
@@ -161,33 +197,40 @@ if is_regression_problem:
         'random_search': {'light_gbm': {'n_runs': params.lgbm_random_search_runs,
                                         'callbacks':
                                             {'neptune_monitor': {'name': 'light_gbm'},
-                                            'persist_results': {'filepath': os.path.join(params.experiment_directory,
-                                                                                        'random_search_light_gbm.pkl')}
-                                            },
+                                             'persist_results': {'filepath': os.path.join(params.experiment_directory,
+                                                                                          'random_search_light_gbm.pkl')}
+                                             },
                                         },
-                        'xgboost': {'n_runs': params.xgb_random_search_runs,
-                                    'callbacks':
-                                        {'neptune_monitor': {'name': 'xgboost'},
-                                        'persist_results': {'filepath': os.path.join(params.experiment_directory,
-                                                                                        'random_search_xgboost.pkl')}
-                                        },
-                                    },
-                },
-        })
+                          'xgboost': {'n_runs': params.xgb_random_search_runs,
+                                      'callbacks':
+                                      {'neptune_monitor': {'name': 'xgboost'},
+                                       'persist_results': {'filepath': os.path.join(params.experiment_directory,
+                                                                                    'random_search_xgboost.pkl')}
+                                       },
+                                      },
+                          },
+    })
 else:
     SOLUTION_CONFIG.update({
         'random_forest': {'n_estimators': parameter_eval(params.rf__n_estimators),
-                        'criterion': parameter_eval(params.rf__criterion),
-                        'warm_start': parameter_eval(params.rf__warm_start),
-                        'max_features': parameter_eval(params.rf__max_features),
-                        'min_samples_split': parameter_eval(params.rf__min_samples_split),
-                        'min_samples_leaf': parameter_eval(params.rf__min_samples_leaf),
-                        'n_jobs': parameter_eval(params.num_workers),
-                        'random_state': RANDOM_SEED,
-                        'verbose': parameter_eval(params.verbose),
-                        'class_weight': parameter_eval(params.rf__class_weight),
-                        },
-
+                          'criterion': parameter_eval(params.rf__criterion),
+                          'warm_start': parameter_eval(params.rf__warm_start),
+                          'max_features': parameter_eval(params.rf__max_features),
+                          'min_samples_split': parameter_eval(params.rf__min_samples_split),
+                          'min_samples_leaf': parameter_eval(params.rf__min_samples_leaf),
+                          'n_jobs': parameter_eval(params.num_workers),
+                          'random_state': RANDOM_SEED,
+                          'verbose': parameter_eval(params.verbose),
+                          'class_weight': parameter_eval(params.rf__class_weight),
+                          },
+        'gradient_boost' : {
+                            'n_estimators': parameter_eval(params.gb__n_estimators),
+                            'learning_rate': parameter_eval(params.gb__learning_rate),
+                            'subsample': parameter_eval(params.gb__subsample),
+                            'max_features': parameter_eval(params.gb__max_features),
+                            'verbose': parameter_eval(params.verbose),
+                            # 'n_jobs': parameter_eval(params.num_workers),
+                            },
         'logistic_regression': {'penalty': parameter_eval(params.lr__penalty),
                                 'tol': parameter_eval(params.lr__tol),
                                 'C': parameter_eval(params.lr__C),
@@ -215,38 +258,45 @@ else:
         'random_search': {'light_gbm': {'n_runs': params.lgbm_random_search_runs,
                                         'callbacks':
                                             {'neptune_monitor': {'name': 'light_gbm'},
-                                            'persist_results': {'filepath': os.path.join(params.experiment_directory,
-                                                                                        'random_search_light_gbm.pkl')}
-                                            },
+                                             'persist_results': {'filepath': os.path.join(params.experiment_directory,
+                                                                                          'random_search_light_gbm.pkl')}
+                                             },
                                         },
-                        'xgboost': {'n_runs': params.xgb_random_search_runs,
-                                    'callbacks':
-                                        {'neptune_monitor': {'name': 'xgboost'},
-                                        'persist_results': {'filepath': os.path.join(params.experiment_directory,
-                                                                                        'random_search_xgboost.pkl')}
-                                        },
-                                    },
-                        'random_forest': {'n_runs': params.rf_random_search_runs,
+                          'xgboost': {'n_runs': params.xgb_random_search_runs,
+                                      'callbacks':
+                                      {'neptune_monitor': {'name': 'xgboost'},
+                                       'persist_results': {'filepath': os.path.join(params.experiment_directory,
+                                                                                    'random_search_xgboost.pkl')}
+                                       },
+                                      },
+                          'random_forest': {'n_runs': params.rf_random_search_runs,
                                             'callbacks':
                                                 {'neptune_monitor': {'name': 'random_forest'},
-                                                'persist_results':
+                                                 'persist_results':
                                                     {'filepath': os.path.join(params.experiment_directory,
-                                                                            'random_search_random_forest.pkl')}
-                                                },
+                                                                              'random_search_random_forest.pkl')}
+                                                 },
                                             },
-                        'logistic_regression': {'n_runs': params.lr_random_search_runs,
-                                                'callbacks':
-                                                    {'neptune_monitor': {'name': 'logistic_regression'},
-                                                    'persist_results':
-                                                        {'filepath': os.path.join(params.experiment_directory,
-                                                                                    'random_search_logistic_regression.pkl')}
-                                                    },
-                                                },
-                        'svc': {'n_runs': params.svc_random_search_runs,
-                                'callbacks': {'neptune_monitor': {'name': 'svc'},
+                          'gradient_boost': {'n_runs': params.gb_random_search_runs,
+                                  'callbacks': {'neptune_monitor': {'name': 'gradient_boost'},
                                                 'persist_results': {'filepath': os.path.join(params.experiment_directory,
-                                                                                            'random_search_svc.pkl')}
+                                                                                             'random_search_gradient_boost.pkl')
+                                                                    }
+                                            },
+                            },
+                          'logistic_regression': {'n_runs': params.lr_random_search_runs,
+                                                  'callbacks':
+                                                  {'neptune_monitor': {'name': 'logistic_regression'},
+                                                   'persist_results':
+                                                   {'filepath': os.path.join(params.experiment_directory,
+                                                                             'random_search_logistic_regression.pkl')}
+                                                   },
+                                                  },
+                          'svc': {'n_runs': params.svc_random_search_runs,
+                                  'callbacks': {'neptune_monitor': {'name': 'svc'},
+                                                'persist_results': {'filepath': os.path.join(params.experiment_directory,
+                                                                                             'random_search_svc.pkl')}
                                                 },
-                                },
-                        },
-        })
+                                  },
+                          },
+    })

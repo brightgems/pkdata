@@ -119,7 +119,9 @@ def prepare_dataset():
     df_all['acceleration_resource_reduce_ratio'] = df_all['acceleration_reduce']/(df_all['resource_reduce']+1)
     df_all['acceleration_army_add_ratio'] = df_all['acceleration_add']/(df_all['army_add']+1)
     df_all['resource_army_add_ratio'] = df_all['resource_add']/(df_all['army_add']+1)
-    df_all['acceleration_add_add_ratio'] = df_all['acceleration_add']/(df_all['resource_add']+1)
+    df_all['acceleration_resource_add_ratio'] = df_all['acceleration_add']/(df_all['resource_add']+1)
+    df_all['acceleration_resource_cross_ratio'] = df_all['resource_add']/(df_all['acceleration_reduce']+1)
+    df_all['acceleration_army_cross_ratio'] = df_all['army_add']/(df_all['acceleration_reduce']+1)
     df_all['bd_sr_product']= df_all['bd_main_score']*df_all['sr_main_score']
     df_all['bd_sr_ratio']= df_all['bd_main_score']/(df_all['sr_main_score']+1)
     df_all['acceleration_per_hour'] = df_all['acceleration_reduce']/(1+df_all['avg_online_minutes'])/60 
