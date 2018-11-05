@@ -30,6 +30,27 @@ def classifier_select_best_threshold(model_step, config, train_mode,suffix, **kw
                                 **kwargs)
     return select_best_threshold
 
+def select_features_from_model(features, features_valid, config, train_mode, suffix, **kwargs):
+    select_features_step = Step(name='select_features_from_model{}'.format(suffix),
+                            transformer=fe.SelectFeaturesFromModel(threshold='median'),
+                            input_data=['tap4fun'],
+                            input_steps=[features],
+                            is_trainable= True,
+                            adapter=Adapter({'X': E(features.name, 'features'),
+                                                'y': E('tap4fun', 'y')
+                                            }),
+                            experiment_directory=config.pipeline.experiment_directory,
+                            )
+    if train_mode:
+        select_features_valid_step = Step(name='select_features_from_model_valid{}'.format(suffix),
+                            transformer=select_features_step.transformer,
+                            input_steps=[features_valid],
+                            adapter=Adapter({'X': E(features_valid.name, 'features')}),
+                            experiment_directory=config.pipeline.experiment_directory,
+                            )
+        return select_features_step,select_features_valid_step
+    else:
+        return select_features_step
 
 def classifier_light_gbm(features, config, train_mode, suffix, **kwargs):
     model_name = 'light_gbm{}'.format(suffix)
@@ -60,7 +81,7 @@ def classifier_light_gbm(features, config, train_mode, suffix, **kwargs):
                          adapter=Adapter({'X': E(features_train.name, 'features'),
                                           'y': E('tap4fun', 'y'),
                                           'feature_names': E(features_train.name, 'feature_names'),
-                                          'categorical_features': E(features_train.name, 'categorical_features'),
+                                        #   'categorical_features': E(features_train.name, 'categorical_features'),
                                           'X_valid': E(features_valid.name, 'features'),
                                           'y_valid': E('tap4fun', 'y_valid'),
                                           }),
@@ -134,7 +155,7 @@ def classifier_sklearn(sklearn_features,
                        **kwargs):
     config, model_params, rs_config = full_config
     if train_mode:
-        if config.random_search.random_forest.n_runs:
+        if getattr(config.random_search, clf_name).n_runs:
             transformer = RandomSearchOptimizer(
                 partial(get_sklearn_classifier,
                         ClassifierClass=ClassifierClass,
@@ -197,7 +218,11 @@ def feature_extraction(config, train_mode, suffix, **kwargs):
             train_mode=train_mode,
             suffix=suffix,
             **kwargs)
-        
+        # feature_from_l1, feature_from_l1_valid = select_features_from_model(
+        #     feature_combiner, feature_combiner_valid,config=config,
+        #     train_mode=train_mode,
+        #     suffix=suffix,
+        #     **kwargs)
         return feature_combiner, feature_combiner_valid
     else:
         tap4fun = _tap4fun(config, train_mode, suffix, **kwargs)
@@ -215,7 +240,11 @@ def feature_extraction(config, train_mode, suffix, **kwargs):
                                           train_mode=train_mode,
                                           suffix=suffix,
                                           **kwargs)
-
+        # feature_from_l1 = select_features_from_model(
+        #     feature_combiner, None ,config=config,
+        #     train_mode=train_mode,
+        #     suffix=suffix,
+        #     **kwargs)
         return feature_combiner
 
 
@@ -333,11 +362,9 @@ def _tap4fun_groupby_agg(config, train_mode, suffix, **kwargs):
                                    **kwargs)
 
     if train_mode:
-
         tap4fun_groupby_agg_valid = Step(name='tap4fun_groupby_agg_valid{}'.format(suffix),
-                                             transformer=fe.GroupbyAggregate(**config.tap4fun.aggregations),
+                                             transformer=tap4fun_groupby_agg.transformer,
                                              input_data=['tap4fun'],
-                                             is_trainable=True,
                                              adapter=Adapter(
                                                  {'main_table': E('tap4fun', 'X_valid'),
                                                   }),
@@ -395,6 +422,7 @@ def _tap4fun(config, train_mode, suffix, **kwargs):
 
 def _fillna(fill_value):
     def _inner_fillna(X, X_valid=None):
+        X = X.replace('None', fill_value)
         if X_valid is None:
             return {'X': X.fillna(fill_value)}
         else:

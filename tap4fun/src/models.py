@@ -12,6 +12,7 @@ from toolkit.sklearn_transformers.models import SklearnClassifier
 import xgboost as xgb
 from matplotlib import pyplot as plt
 from .utils import get_logger
+from .pipeline_config import is_regression_problem
 
 logger = get_logger()
 ctx = neptune.Context()
@@ -170,6 +171,7 @@ class LightGBM(BaseTransformer):
         logger.info('LightGBM, train labels shape      {}'.format(y.shape))
         logger.info('LightGBM, validation labels shape {}'.format(y_valid.shape))
 
+
         data_train = lgb.Dataset(data=X,
                                  label=y,
                                  feature_name=feature_names,
@@ -246,7 +248,11 @@ class LightGBM(BaseTransformer):
 def get_sklearn_classifier(ClassifierClass, normalize, **kwargs):
     class SklearnBinaryClassifier(SklearnClassifier):
         def transform(self, X, y=None, target=1, **kwargs):
-            prediction = self.estimator.predict_proba(X)[:, target]
+            if hasattr(self.estimator, 'predict_proba'):
+                prediction = self.estimator.predict_proba(X)[:, target]
+            else:
+                import pdb ; pdb.set_trace()
+                prediction = self.estimator.predict(X)
             return {'prediction' : prediction}
 
     if normalize:

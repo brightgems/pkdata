@@ -14,7 +14,9 @@ import requests
 from . import pipeline_config as cfg
 from .pipeline_config import score_name, score_function
 from .pipelines import PIPELINES
-from .utils import compress_dtypes, init_logger, set_seed, make_submission, create_submission, verify_submission, calculate_rank
+from .utils import \
+    (compress_dtypes, init_logger, set_seed, make_submission, create_submission, 
+     split_train_evaluate, verify_submission, calculate_rank)
 from .preprocess import prepare_dataset
 
 set_seed(cfg.RANDOM_SEED)
@@ -39,6 +41,7 @@ def print_score(pipeline_name, y_true, y_pred):
         ctx.channel_send('accuracy', 0, accuracy)
         ctx.channel_send('precision', 0, precision)
         ctx.channel_send('recall', 0, recall)
+        print(confusion_matrix(y_true, y_pred))
 
 class PipelineManager():
     def train(self, pipeline_name, dev_mode):
@@ -71,11 +74,11 @@ def train(pipeline_name, dev_mode):
     tables = _read_data(dev_mode, read_train=True, read_test=False)
 
     logger.info('Shuffling and splitting into train and test...')
-    train_data_split, valid_data_split = train_test_split(tables.train,
-                                                          test_size=params.validation_size,
-                                                          random_state=cfg.RANDOM_SEED,
-                                                          shuffle=params.shuffle)
-
+    # train_data_split, valid_data_split = train_test_split(tables.train,
+    #                                                       test_size=params.validation_size,
+    #                                                       random_state=cfg.RANDOM_SEED,
+    #                                                       shuffle=params.shuffle)
+    train_data_split, valid_data_split = split_train_evaluate(tables.train, 0.78)
     logger.info('Target mean in train: {}'.format(train_data_split[cfg.TARGET_COLUMNS].mean()))
     logger.info('Target mean in valid: {}'.format(valid_data_split[cfg.TARGET_COLUMNS].mean()))
     logger.info('Train shape: {}'.format(train_data_split.shape))
@@ -105,11 +108,11 @@ def evaluate(pipeline_name, dev_mode):
     tables = _read_data(dev_mode, read_train=True, read_test=False)
 
     logger.info('Shuffling and splitting to get validation split...')
-    _, valid_data_split = train_test_split(tables.train,
-                                           test_size=params.validation_size,
-                                           random_state=cfg.RANDOM_SEED,
-                                           shuffle=params.shuffle)
-
+    # _, valid_data_split = train_test_split(tables.train,
+    #                                        test_size=params.validation_size,
+    #                                        random_state=cfg.RANDOM_SEED,
+    #                                        shuffle=params.shuffle)
+    _, valid_data_split = split_train_evaluate(tables.train, 0.78)
     logger.info('Target mean in valid: {}'.format(valid_data_split[cfg.TARGET_COLUMNS].mean()))
     logger.info('Valid shape: {}'.format(valid_data_split.shape))
 
@@ -296,7 +299,8 @@ def _read_data(dev_mode, read_train=True, read_test=False):
         df = _read_frame(params.train_filepath, nrows=nrows)
         df = _preprocess_target_feature(df)
         # 只保留付费用户
-        df = df[df['avg_online_minutes']>10].reset_index()
+        # df = df[df['pay_price']>0].reset_index()
+        df = df[df['avg_online_minutes']>20].reset_index()
         raw_data['train'] = df
     if read_test:
         df = _read_frame(params.test_filepath, nrows=nrows)
@@ -311,9 +315,9 @@ def _preprocess_target_feature(df):
     logger.info('Preprocess data...')
     if 'prediction_pay_price' in df.columns:
         df['prediction_future_pay_price'] = df['prediction_pay_price'] - df['pay_price']
-        df = df.assign(is_future_pay= lambda x: x.prediction_future_pay_price>0)
+        df = df.assign(is_future_no_pay= lambda x: x.prediction_future_pay_price<1)
         if cfg.is_regression_problem:
-            drop_cols = ['prediction_pay_price','is_future_pay']
+            drop_cols = ['prediction_pay_price','is_future_no_pay']
         else:
             drop_cols = ['prediction_pay_price','prediction_future_pay_price']
     # =========make categical features=========

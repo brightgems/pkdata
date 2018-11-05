@@ -2,6 +2,10 @@
 .ipynb_checkpoints
 *.pyc
 *.csv
+*.zip
+*.txt
+*.7z
+*.pkl
 
 tap4fun游戏玩家付费金额预测大赛.rar
 offline_job.log
@@ -12,3 +16,6 @@ tap4fun/data/
 data/
 output/
 *.log
+log
+tmp
+events.*

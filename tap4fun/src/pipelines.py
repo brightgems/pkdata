@@ -1,13 +1,13 @@
 from functools import partial
 
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, AdaBoostClassifier
+from sklearn.linear_model import LogisticRegression, RidgeCV, LassoCV
+from sklearn.svm import LinearSVC, SVC
 from steppy.adapter import Adapter, E
 from steppy.base import Step, make_transformer
 from .models import AvgTransformer
 from . import pipeline_config as cfg
-from .pipeline_blocks import (classifier_light_gbm,
+from .pipeline_blocks import (classifier_light_gbm, 
                               classifier_select_best_threshold,
                               classifier_sklearn, classifier_xgb,
                               feature_extraction, preprocessing_fillna)
@@ -151,15 +151,49 @@ PIPELINES = {'lightGBM': lightGBM,
                                               train_mode=False,
                                               normalize=True)
              },
+             'adaboost': {
+                         'train': partial(sklearn_main,
+                                          ClassifierClass=AdaBoostClassifier,
+                                          clf_name='gradient_boost',
+                                          train_mode=True,
+                                          normalize=True),
+                         'inference': partial(sklearn_main,
+                                              ClassifierClass=AdaBoostClassifier,
+                                              clf_name='gradient_boost',
+                                              train_mode=False,
+                                              normalize=True)
+             },
              'svc': {'train': partial(sklearn_main,
-                                      ClassifierClass=SVC,
+                                      ClassifierClass=LinearSVC,
                                       clf_name='svc',
                                       train_mode=True,
                                       normalize=True),
                      'inference': partial(sklearn_main,
-                                          ClassifierClass=SVC,
+                                          ClassifierClass=LinearSVC,
                                           clf_name='svc',
                                           train_mode=False,
                                           normalize=True)
-                     }
+                     },
+            'lasso': {'train': partial(sklearn_main,
+                                      ClassifierClass=LassoCV,
+                                      clf_name='lasso',
+                                      train_mode=True,
+                                      normalize=True),
+                     'inference': partial(sklearn_main,
+                                          ClassifierClass=LassoCV,
+                                          clf_name='lasso',
+                                          train_mode=False,
+                                          normalize=True)
+                     },
+             'ridge': {'train': partial(sklearn_main,
+                                      ClassifierClass=RidgeCV,
+                                      clf_name='ridge',
+                                      train_mode=True,
+                                      normalize=True),
+                     'inference': partial(sklearn_main,
+                                          ClassifierClass=RidgeCV,
+                                          clf_name='ridge',
+                                          train_mode=False,
+                                          normalize=True)
+                     },
              }

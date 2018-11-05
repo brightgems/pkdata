@@ -8,8 +8,12 @@ from steppy.base import BaseTransformer
 from steppy.utils import get_logger
 from toolz.curried import pipe, map, filter, get
 from .utils import compress_dtypes, get_random_string
-from gplearn.genetic import SymbolicRegressor
 from sklearn.feature_selection import SelectKBest, SelectFromModel, chi2, f_classif
+from sklearn.linear_model import LogisticRegression, Lasso
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.pipeline import make_pipeline
+from .pipeline_config import DAYS_COLUMN
 
 logger = get_logger()
 
@@ -33,7 +37,33 @@ class SelectKBestFeatures(BaseTransformer):
     def persist(self, filepath):
         joblib.dump(self.estimator, filepath)
 
+
+class SelectFeaturesFromModel(BaseTransformer):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.threshold = kwargs.get('threshold', 'median')
+    
+    def fit(self, X, y, **kwargs):
+        clf_lr = LogisticRegression(penalty='l1',class_weight='balanced',solver='liblinear',C=.02,n_jobs=8)
+        # clf_lr = RandomForestClassifier()
+        self.estimator = make_pipeline(MinMaxScaler(), SelectFromModel(clf_lr, threshold=self.threshold)).fit(X, y)
         
+    def transform(self, X, **kwargs):
+        k_features = self.estimator.transform(X)
+        support = self.estimator.steps[-1][1].get_support()
+        feature_names = X.columns[support].values.tolist()
+        k_features = pd.DataFrame(k_features, columns=feature_names)
+        # print("selected features from model:\r{}".format(str(feature_names)))
+        return {'features': k_features, 'feature_names':feature_names}
+
+    def load(self, filepath):
+        self.estimator = joblib.load(filepath)
+        return self
+
+    def persist(self, filepath):
+        joblib.dump(self.estimator, filepath)
+
+                
 class FeatureJoiner(BaseTransformer):
     def transform(self, numerical_feature_list, categorical_feature_list, **kwargs):
         features = numerical_feature_list + categorical_feature_list
@@ -76,6 +106,7 @@ class CategoricalEncoder(BaseTransformer):
     def transform(self, X, **kwargs):
         X_ = X[self.categorical_columns]
         X_ = self.categorical_encoder.transform(X_)
+        X_.fillna(0,inplace=True)
         return {'categorical_features': X_}
 
     def load(self, filepath):
@@ -92,9 +123,20 @@ class GroupbyAggregate(BaseTransformer):
         self.groupby_aggregations = groupby_aggregations
         self.feature_names = []
 
-    def fit(self, main_table, **kwargs):
-        self.features = []
+    def __do_aggredate(self, main_table, days_col_fit = False):
+        """
+            insert aggregate column by groupby_aggregations
+
+            Arguments:
+                 days_col_fit(bool): process grouby cols has days_col only
+        """
+        self.feature_names_temp = deepcopy(self.feature_names)
+        self.features_temp = deepcopy(self.features)
+
         for groupby_cols, specs in self.groupby_aggregations:
+            if days_col_fit ^ (DAYS_COLUMN in groupby_cols):
+                # aggregate should delay until transform when groupby_cols has days 
+                continue
             group_object = main_table.groupby(groupby_cols)
             for select, agg in specs:
                 if str(type(agg)) == "<class 'function'>":
@@ -105,29 +147,44 @@ class GroupbyAggregate(BaseTransformer):
                     group_features = group_object[select].agg(agg).reset_index()
                 group_features = group_features.rename(index=str,
                             columns={select: groupby_aggregate_name})[groupby_cols + [groupby_aggregate_name]]
-                group_features = compress_dtypes(group_features)
-                self.features.append((groupby_cols, group_features, select))
-                self.feature_names.append(groupby_aggregate_name)
+                group_features.fillna(0, inplace=True)
+                
+                if days_col_fit:
+                    self.features_temp.append((groupby_cols, group_features, select))
+                    self.feature_names_temp.append(groupby_aggregate_name)
+                else:
+                    self.features.append((groupby_cols, group_features, select))
+                    self.feature_names.append(groupby_aggregate_name)
+        
+
+    def fit(self, main_table, **kwargs):
+        self.features = []
+        self.__do_aggredate(main_table, False)
         return self
 
     def transform(self, main_table, **kwargs):
+        # create aggregate col group by days_col
+        self.__do_aggredate(main_table, True)
         neural_feature_names = []
-        
-        for index, (groupby_cols, groupby_features, select) in enumerate(self.features):
-            feature_name = self.feature_names[index] 
-            print(feature_name)
-            main_table = main_table.merge(groupby_features,
-                                          on=groupby_cols,
-                                          how='left')
+
+        for index, (groupby_cols, groupby_features, select) in enumerate(self.features_temp):
+            feature_name = self.feature_names_temp[index] 
+            main_table = main_table.merge(groupby_features,on=groupby_cols, how='left')
             # create neural features
-            
-            if any([feature_name.endswith(func) for func in ['min','max','mean','mode']]):
+            if not any([feature_name.endswith(func) for func in ['count']]):
                 neural_feature_name = feature_name +'_neural'
-                main_table[neural_feature_name] =  main_table[select]/(main_table[feature_name]+1)
-                if neural_feature_name not in self.feature_names:
-                    neural_feature_names.append(neural_feature_name)
-        self.feature_names.extend(neural_feature_names)
-        return {'numerical_features': main_table[self.feature_names].astype(np.float32)}
+                try:
+                    main_table[neural_feature_name] =  main_table[select]/(main_table[feature_name]+1)
+                except:
+                    # work around for strange error
+                    main_table = main_table.merge(groupby_features,on=groupby_cols, how='left')
+                    main_table[neural_feature_name] =  main_table[select]/(main_table[feature_name]+1)
+                
+                neural_feature_names.append(neural_feature_name)
+        self.feature_names_temp.extend(neural_feature_names)
+        logger.info("created aggreate cols#: %d"%len(self.feature_names_temp))
+        main_table = compress_dtypes(main_table)
+        return {'numerical_features': main_table[self.feature_names_temp].astype(np.float32)}
 
     def load(self, filepath):
         params = joblib.load(filepath)
@@ -223,7 +280,6 @@ class Tap4funFeatures(BaseTransformer):
         logger.info("Useless features:\n"+str(unused_features))
 
     def transform(self, X, **kwargs):
-        
         self.select_columns(X)
         X[self.numerical_columns].fillna(0, inplace=True)
         return {'numerical_features': X[self.numerical_columns],

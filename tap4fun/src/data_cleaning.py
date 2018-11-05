@@ -11,8 +11,6 @@ class Tap4funCleaning(BaseTransformer):
         super().__init__()
 
     def transform(self, X):
-        
-
         return {'X': X}
 
 

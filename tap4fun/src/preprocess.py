@@ -12,8 +12,6 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import (accuracy_score, confusion_matrix, f1_score,
                              mean_squared_error, precision_recall_curve,
                              precision_score, recall_score, roc_auc_score)
-from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
-
 from .utils import compress_dtypes
 
 
@@ -134,6 +132,8 @@ def prepare_dataset():
     # ========export dataset=========
     df_train = df_all[~df_all.prediction_pay_price.isnull()]
     df_test = df_all[df_all.prediction_pay_price.isnull()]
-    df_train.to_parquet('data/tap_fun_train.parquet')
-    df_test.to_parquet('data/tap_fun_test.parquet')
+    # df_train.to_parquet('data/tap_fun_train.parquet')
+    # df_test.to_parquet('data/tap_fun_test.parquet')
+    df_train.to_hdf('data/tap_fun_train.h5','/data')
+    df_test.to_hdf('data/tap_fun_test.h5','/data')
 
