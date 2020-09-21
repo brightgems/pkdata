@@ -19,3 +19,4 @@ output/
 log
 tmp
 events.*
+.vscode
