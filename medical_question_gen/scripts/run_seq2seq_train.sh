@@ -1,6 +1,7 @@
 export PYTHONPATH=$(pwd)
 
 python pytorch-seq2seq-attention.py \
+    --train \
     --epochs 100 \
     --learning_rate 2e-3 \
     --early_stopping 5 \

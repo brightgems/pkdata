@@ -425,7 +425,7 @@ def train(model, tokenizer, epochs, batch_size, save_every=1000, plot_every=100,
 
             optimizer.zero_grad()
             output, attention, result = model(
-                text_tensor, token_type_tensor, question_tensor)
+                text_tensor, token_type_tensor, question_tensor,teacher_forcing_ratio=0.5)
             # output = [batch size,trg sen len, output dim]
             # trg = [batch size,trg sen len]
 
@@ -463,7 +463,7 @@ def train(model, tokenizer, epochs, batch_size, save_every=1000, plot_every=100,
             if global_step % plot_every == 0:
                 plot_loss_avg = plot_loss_total / plot_every
                 plot_losses.append(print_loss_avg)
-                tb_writer.add_scalar('train_loss', plot_loss_avg, global_step)
+                tb_writer.add_scalar('train_loss', print_loss_avg, global_step)
                 plot_loss_total = 0
                 showPlot(plot_losses)
             global_step+=1
@@ -500,7 +500,7 @@ def evaluate(model, tokenizer, batch_size, trg_sent_len):
         question_tensor = batch[2].to(device)   
         with torch.no_grad():
             output, attention, prediction = model(
-                text_tensor, token_type_tensor, question_tensor)
+                text_tensor, token_type_tensor, question_tensor,teacher_forcing_ratio=0)  # turn off teacher forcing
         rouge_l, r, h = calculate_rouge(
             prediction.cpu().tolist(), question_tensor.cpu().tolist(), tokenizer)
         references.extend(r)
@@ -528,12 +528,42 @@ def evaluate(model, tokenizer, batch_size, trg_sent_len):
     return epoch_loss / len(valid_dataloader), metrics_dict['ROUGE_L']
 
 
+def predict(model, tokenizer, batch_size, trg_sent_len):
+    test_dataloader = DataLoader(
+        test_dataset, batch_size=batch_size)
+    epoch_iterator = tqdm(test_dataloader, desc="Iteration")
+    predictions = []; answers = []
+    epoch_loss = 0
+
+    model.eval()
+    for step, batch in enumerate(epoch_iterator):
+        text_tensor = batch[0].to(device)
+        token_type_tensor = batch[1].to(device)
+        question_tensor = batch[2].to(device)   
+        with torch.no_grad():
+            output, attention, prediction = model(
+                text_tensor, token_type_tensor, question_tensor,teacher_forcing_ratio=0)  # turn off teacher forcing
+        answer_tensor = text_tensor[token_type_tensor]
+        batch_size=text_tensor.shape[0]
+        for i in range(batch_size):
+            answer_tensor=torch.masked_select(text_tensor[i],token_type_tensor[i].bool())
+            sample_a = tokenizer.decode(answer_tensor.cpu().tolist(),True)
+            sample_p = tokenizer.decode(prediction[i].cpu().tolist(),True)
+            answers.append(sample_a)
+            predictions.append(sample_p)
+    # export to tsv
+    with open(os.path.join(args.checkpoint_dir,'predictions.csv'),'w',encoding='utf-8') as file:
+        for a, p in zip(answers,predictions):
+            file.write('{0}\t{1}\n'.format(a,p))
+
+
+
 ######################################################################
 # We can evaluate interatively and print out the
 # input, target, and output to make some subjective quality judgements:
 #
 
-def evaluateInterative(model, tokenizer, n=10):
+def predictInterative(model, tokenizer, n=10):
     for i in range(n):
         text = input('text>')
         answer = input('answer>')
@@ -591,8 +621,14 @@ def parseArgs(args):
     # Global options
     globalArgs = parser.add_argument_group('Global options')
     globalArgs.add_argument('--train',
-                            action='store_true', default=True,
-                            help='train or test interactively')
+                            action='store_true', default=False,
+                            help='train model')
+    globalArgs.add_argument('--predict',
+                            action='store_true', default=False,
+                            help='run predict')
+    globalArgs.add_argument('--interactively',
+                            action='store_true', default=False,
+                            help='run predict')
     globalArgs.add_argument('--save_dir',
                             type=str, default='checkpoints',
                             help='model save dir')
@@ -665,8 +701,11 @@ if args.train:
     logger.info("training finished:\n global_step = %s, loss = %s", global_step, loss)
     avg_loss, rouge_l = evaluate(model, tokenizer, args.batch_size, max_question_len)
     logger.info("evaluate finished:\n avg rouge_l = %s, loss = %s", rouge_l, avg_loss)
-else:
+if args.predict:
     checkpoint = torch.load(os.path.join(args.checkpoint_dir, 'pytorch_model.bin'))
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model.load_state_dict(checkpoint)
     logger.info("Pre-trained Seq2seq-Attn is successfully loaded")
-    evaluateInterative(model, tokenizer)
+    if args.interactively:
+        predictInterative(model, tokenizer)
+    else:
+        predict(model, tokenizer, args.batch_size, max_question_len)
