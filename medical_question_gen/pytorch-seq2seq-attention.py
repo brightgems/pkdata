@@ -462,8 +462,8 @@ def train(model, tokenizer, epochs, batch_size, save_every=1000, plot_every=100,
 
             if global_step % plot_every == 0:
                 plot_loss_avg = plot_loss_total / plot_every
-                plot_losses.append(print_loss_avg)
-                tb_writer.add_scalar('train_loss', print_loss_avg, global_step)
+                plot_losses.append(plot_loss_avg)
+                tb_writer.add_scalar('train_loss', plot_loss_avg, global_step)
                 plot_loss_total = 0
                 showPlot(plot_losses)
             global_step+=1
