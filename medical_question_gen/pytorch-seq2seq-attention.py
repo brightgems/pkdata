@@ -50,7 +50,6 @@ from torch import optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, Sampler, SequentialSampler, RandomSampler, BatchSampler
 from nlgeval import NLGEval
-from utils import SmoothCrossEntropyLoss
 
 nlgeval = NLGEval()
 from tqdm import tqdm, trange
