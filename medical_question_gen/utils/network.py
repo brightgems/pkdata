@@ -14,7 +14,7 @@ import sys
 
 import numpy as np
 import torch
-import torch.functional as F
+import torch.nn.functional as F
 import torch.nn.init as init
 from torch import nn, optim
 from torch.nn.utils.rnn import pad_sequence
@@ -152,16 +152,17 @@ def frange_cycle_zero_linear(n_iter, start=0.0, stop=1.0,  n_cycle=4, ratio_incr
     return L 
 
 
-def loss_calc(logits, labels, smoothing = True):
-    labels = labels[:, 1:]
+def loss_calc(logits, labels, smoothing = True,ignore_label=0):
     logits = logits.reshape(-1, logits.size(-1))
     labels = labels.reshape(-1)
-
+    mask_selection = labels!=ignore_label
     if smoothing:
         eps = 0.1
         num_classes = logits.size(-1)
-
+        
         log_preds = F.log_softmax(logits, dim=-1)
+        log_preds = log_preds[mask_selection,:]
+        labels = labels[mask_selection]
         loss = -log_preds.sum(dim=-1).mean()
         nll = F.nll_loss(log_preds, labels)
         loss = eps*loss/num_classes + (1-eps)*nll

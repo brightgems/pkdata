@@ -24,7 +24,11 @@ And for more, read the papers that introduced these topics:
 -  `Neural Machine Translation by Jointly Learning to Align and
    Translate <https://arxiv.org/abs/1409.0473>`__
 -  `A Neural Conversational Model <https://arxiv.org/abs/1506.05869>`__
-**Requirements**
+
+**Changes**
+- share embeding
+- label smoothing
+
 """
 from __future__ import unicode_literals, print_function, division
 import time
@@ -46,13 +50,14 @@ from torch import optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, Sampler, SequentialSampler, RandomSampler, BatchSampler
 from nlgeval import NLGEval
+from utils import SmoothCrossEntropyLoss
 
 nlgeval = NLGEval()
 from tqdm import tqdm, trange
 
 from tokenizer import ZhTokenizer
 from dataset import MedQaDataset, combine_text_answer
-from utils import weight_init, showPlot, calculate_rouge
+from utils import weight_init, showPlot, calculate_rouge,loss_calc
 try:
     from torch.utils.tensorboard import SummaryWriter
 except ImportError:
@@ -95,12 +100,13 @@ clip = 1
 #
 
 class EncoderRNN(nn.Module):
-    def __init__(self, vocab_size, enc_hid_dim, embed_dim):
+    def __init__(self, embedding, vocab_size, enc_hid_dim, embed_dim):
         super(EncoderRNN, self).__init__()
-        self.input_embedding = nn.Embedding(vocab_size, embed_dim)
+        self.input_embedding = embedding
         self.token_type_embedding = nn.Embedding(2, embed_dim)
         self.gru = nn.GRU(embed_dim, enc_hid_dim,
                           batch_first=True, bidirectional=True)
+        self.fc=nn.Linear(enc_hid_dim*2,dec_hid_dim)
 
     def forward(self, input_sen, token_type=None):
         # input_sen = [batch_size, text_max_len]
@@ -111,6 +117,8 @@ class EncoderRNN(nn.Module):
         else:
             embedded = input_embedded
         output, hidden = self.gru(embedded)
+        # hidden[-2,:,:]和hidden[-1,:,:]分别代表前向和后向，通过tanh来激活
+        hidden=torch.tanh(self.fc(torch.cat((hidden[-2,:,:],hidden[-1,:,:]),dim=1)))
         return output, hidden
 
 
@@ -189,16 +197,16 @@ class Attention(nn.Module):
 
 
 class AttnDecoderRNN(nn.Module):
-    def __init__(self, output_size, emb_dim, enc_hid_dim, dec_hid_dim, attention, dropout_p=0.1):
+    def __init__(self, embedding, vocab_size, emb_dim, enc_hid_dim, dec_hid_dim, attention, dropout_p=0.1):
         super(AttnDecoderRNN, self).__init__()
         self.dropout_p = dropout_p
 
-        self.embedding = nn.Embedding(output_size, emb_dim)
+        self.embedding = embedding
         self.attention = attention
         self.dropout = nn.Dropout(dropout_p)
         self.gru = nn.GRU((enc_hid_dim * 2) + emb_dim,
                           dec_hid_dim, batch_first=True)
-        self.out = nn.Linear(dec_hid_dim, output_size)
+        self.out = nn.Linear((enc_hid_dim*2)+dec_hid_dim+emb_dim, vocab_size)
 
     def forward(self, inputs, hidden,  context, mask):
         # input = [batch size]
@@ -218,7 +226,11 @@ class AttnDecoderRNN(nn.Module):
 
         output, hidden = self.gru(gru_input, hidden.unsqueeze(0))
 
-        output = F.log_softmax(self.out(output), dim=2)
+        output = output.squeeze(1)
+        attn_applied = attn_applied.squeeze(1)
+        embedded = embedded.squeeze(1)
+
+        output = self.out(torch.cat([output, attn_applied, embedded], dim=1))
         return output, hidden.squeeze(0), attn_weights.squeeze(1)
 
     def initHidden(self):
@@ -261,28 +273,33 @@ class AttnDecoderRNN(nn.Module):
 #
 
 class Seq2Seq(nn.Module):  # Bulid Seq2Seq Model
-    def __init__(self, encoder, decoder, pad_token_id=0, eos_token_id=3):
+    def __init__(self, vocab_size, embed_dim, enc_hid_dim, dec_hid_dim, dropout_p, pad_token_id=0, eos_token_id=3):
         super(Seq2Seq, self).__init__()
         self.pad_token_id = pad_token_id
         self.eos_token_id = eos_token_id
-        self.encoder = encoder
-        self.decoder = decoder
-        self.transform = nn.Linear(enc_hid_dim*2, dec_hid_dim)
+        self.embedding=nn.Embedding(vocab_size, embed_dim)
+        self.attn = Attention(enc_hid_dim, dec_hid_dim)
+        self.encoder = EncoderRNN(self.embedding, vocab_size, enc_hid_dim, embed_dim)
+        self.decoder = AttnDecoderRNN(self.embedding, vocab_size, embed_dim, enc_hid_dim,
+                     dec_hid_dim, self.attn, dropout_p)
 
     def create_mask(self, src):
         mask = (src != self.pad_token_id)
         return mask
 
     def forward(self, input_sen, token_type_ids, questions, teacher_forcing_ratio=0.75):
+        if (questions[:,2]==self.eos_token_id).all():
+            assert teacher_forcing_ratio == 0, "Must be zero during inference"
+            inference = True
+        else:
+            inference = False
         max_len = questions.shape[1]
         batch_size = questions.shape[0]
         loss = 0
         # encode
         context, hidden = self.encoder(input_sen, token_type_ids)
-        # hidden = (num_layers * num_directions, batch, hidden_size)
-        hidden = hidden.permute(1, 0, 2).reshape(batch_size, -1)
-        hidden = F.relu(self.transform(hidden))
         # hidden = (batch, hidden_size)
+
         # tensor to store
         attentions = torch.zeros(max_len, batch_size, input_sen.shape[1]).to(input_sen.device)
         outputs = torch.zeros(max_len, batch_size, vocab_size).to(input_sen.device)
@@ -297,13 +314,13 @@ class Seq2Seq(nn.Module):  # Bulid Seq2Seq Model
         for t in range(1, max_len):
             output, hidden, attention = self.decoder(
                 decode_inputs, hidden, context, mask)
-            outputs[t] = output.squeeze(1)
-            attentions[t] = attention.squeeze(1)
+            outputs[t] = output
+            attentions[t] = attention
 
             if use_teacher_forcing:
                 decode_inputs = questions[:, t]
             else:
-                top1 = output.squeeze(1).argmax(1)
+                top1 = output.argmax(1)
                 decode_inputs = top1
 
             decode_inputs = decode_inputs.unsqueeze(1)
@@ -313,7 +330,7 @@ class Seq2Seq(nn.Module):  # Bulid Seq2Seq Model
             # unfinished_sents is set to zero if eos in sentence
             unfinished_sents.mul_((~eos_in_sents).long())
             # pdb.set_trace()
-            if unfinished_sents.max() == 0:
+            if inference and unfinished_sents.max() == 0:
                 break
 
         return outputs, attentions, generated
@@ -403,7 +420,7 @@ def train(model, tokenizer, epochs, batch_size, save_every=1000, plot_every=100,
             raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
         model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
 
-    criterion = nn.CrossEntropyLoss(ignore_index=0)
+    
     model.apply(weight_init)
 
     train_sampler = RandomSampler(train_dataset)
@@ -436,7 +453,7 @@ def train(model, tokenizer, epochs, batch_size, save_every=1000, plot_every=100,
             # output = [(trg sent len - 1) * batch size, output dim]
             # trg = [(trg sent len - 1) * batch size]
 
-            loss = criterion(output, trg)
+            loss = loss_calc(output, trg)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
 
@@ -488,7 +505,7 @@ def evaluate(model, tokenizer, batch_size, trg_sent_len):
     valid_dataloader = DataLoader(
         valid_dataset, sampler=valid_sampler, batch_size=batch_size)
     epoch_iterator = tqdm(valid_dataloader, desc="Iteration")
-    criterion = nn.CrossEntropyLoss(ignore_index=0)
+    # criterion = nn.CrossEntropyLoss(ignore_index=0)
     references = []
     hypotheses = []
     epoch_loss = 0
@@ -513,7 +530,7 @@ def evaluate(model, tokenizer, batch_size, trg_sent_len):
         # prediction = [(trg sent len - 1) * batch size, output dim]
         # trg = [(trg sent len - 1) * batch size]
         with torch.no_grad():
-            loss = criterion(logit, trg)
+            loss = loss_calc(logit, trg)
 
         epoch_loss += loss
         if step % int(len(valid_dataloader) * 0.1) == 0:
@@ -621,7 +638,7 @@ def parseArgs(args):
     # Global options
     globalArgs = parser.add_argument_group('Global options')
     globalArgs.add_argument('--train',
-                            action='store_true', default=False,
+                            action='store_true', default=True,
                             help='train model')
     globalArgs.add_argument('--predict',
                             action='store_true', default=False,
@@ -647,7 +664,7 @@ def parseArgs(args):
     trainingArgs.add_argument('--save_every', type=int, default=2000,
                               help='nb of mini-batch step before creating a model checkpoint')
     trainingArgs.add_argument('--batch_size', type=int,
-                              default=128, help='mini-batch size')
+                              default=2, help='mini-batch size')
     trainingArgs.add_argument(
         '--learning_rate', type=float, default=0.002, help='Learning rate')
     trainingArgs.add_argument(
@@ -690,12 +707,8 @@ def parseArgs(args):
 args = parseArgs(sys.argv[1:])
 vocab_size = tokenizer.vocab_size()
 
-attn = Attention(enc_hid_dim, dec_hid_dim)
-enc = EncoderRNN(vocab_size, enc_hid_dim, embed_dim)
-dec = AttnDecoderRNN(vocab_size, embed_dim, enc_hid_dim,
-                     dec_hid_dim, attn, args.dropout_p)
+model = Seq2Seq(vocab_size,embed_dim, enc_hid_dim, dec_hid_dim, args.dropout_p, PAD_token, EOS_token).to(device)
 
-model = Seq2Seq(enc, dec, PAD_token, EOS_token).to(device)
 if args.train:
     global_step, loss = train(model, tokenizer, epochs=args.epochs, batch_size=args.batch_size, save_every=args.save_every, learning_rate=args.learning_rate)
     logger.info("training finished:\n global_step = %s, loss = %s", global_step, loss)
