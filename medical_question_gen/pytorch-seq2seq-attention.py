@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# coding: utf-8
 """
 NLP From Scratch: Translation with a Sequence to Sequence Network and Attention
 *******************************************************************************
@@ -81,7 +81,6 @@ max_question_len = 128
 embed_dim = 300
 enc_hid_dim = 300
 dec_hid_dim = 300
-clip = 1
 
 
 ######################################################################
@@ -403,7 +402,6 @@ def timeSince(since, percent):
 # Then we call ``train`` many times and occasionally print the progress (%
 # of examples, time so far, estimated time) and average loss.
 #
-
 def train(model, tokenizer, epochs, batch_size, save_every=1000, plot_every=100, learning_rate=0.01):
     start = time.time()
     model_save_dir = os.path.join(args.save_dir,'seq2seq_attn',datetime.now().strftime('%Y-%m-%d_%H%M'))
@@ -431,6 +429,7 @@ def train(model, tokenizer, epochs, batch_size, save_every=1000, plot_every=100,
     global_step = 1
     n_iters = len(train_dataloader)
     logger.info('train and eval')
+    model.zero_grad()
     for epoch in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration")
         for step, batch in enumerate(epoch_iterator):
@@ -439,24 +438,30 @@ def train(model, tokenizer, epochs, batch_size, save_every=1000, plot_every=100,
             token_type_tensor = batch[1].to(device)
             question_tensor = batch[2].to(device)
 
-            optimizer.zero_grad()
-            output, attention, result = model(
+                        output, attention, result = model(
                 text_tensor, token_type_tensor, question_tensor,teacher_forcing_ratio=0.5)
             # output = [batch size,trg sen len, output dim]
             # trg = [batch size,trg sen len]
 
             output = output[1:].view(-1, output.shape[-1])
             question_tensor = question_tensor[:, 1:, ]
-            trg = question_tensor.reshape(-1).to(output.device)
-
+            trg = question_tensor.reshape(-1)
             # output = [(trg sent len - 1) * batch size, output dim]
             # trg = [(trg sent len - 1) * batch size]
 
             loss = loss_calc(output, trg)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+            if args.fp16:
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()            
+                torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)                       
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
-            plot_loss_total += loss
+            plot_loss_total += loss.cpu().detach().item()
+            optimizer.step()
+            model.zero_grad()
+            
 
             if global_step % save_every == 0:
                 valid_loss, rouge_l = evaluate(
@@ -668,6 +673,8 @@ def parseArgs(args):
         '--learning_rate', type=float, default=0.002, help='Learning rate')
     trainingArgs.add_argument(
         '--dropout_p', type=float, default=0.2, help='Dropout probabilities')
+    trainingArgs.add_argument("--max_grad_norm", default=1.0, type=float,
+                        help="Max gradient norm.")
     trainingArgs.add_argument(
         '--early_stopping', type=int, default=0, help='enable early stopping if value >0')
     trainingArgs.add_argument(
