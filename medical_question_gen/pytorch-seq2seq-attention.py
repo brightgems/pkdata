@@ -438,7 +438,7 @@ def train(model, tokenizer, epochs, batch_size, save_every=1000, plot_every=100,
             token_type_tensor = batch[1].to(device)
             question_tensor = batch[2].to(device)
 
-                        output, attention, result = model(
+            output, attention, result = model(
                 text_tensor, token_type_tensor, question_tensor,teacher_forcing_ratio=0.5)
             # output = [batch size,trg sen len, output dim]
             # trg = [batch size,trg sen len]
